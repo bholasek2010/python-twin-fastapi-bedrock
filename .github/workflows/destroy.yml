@@ -57,9 +57,8 @@ jobs:
           export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
           export DEFAULT_AWS_REGION=${{ secrets.DEFAULT_AWS_REGION }}
           
-          # Make script executable and run it
-          #chmod +x scripts/destroy.sh
-          ./scripts/destroy.ps1 Environment ${{ github.event.inputs.environment }}
+          chmod +x scripts/destroy.sh
+          ./scripts/destroy.sh ${{ github.event.inputs.environment }}
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
