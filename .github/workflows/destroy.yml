@@ -37,17 +37,17 @@ jobs:
           echo "✅ Destruction confirmed for ${{ github.event.inputs.environment }}"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: github-actions-destroy
           aws-region: ${{ secrets.DEFAULT_AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false  # Important: disable wrapper to get raw outputs
 
