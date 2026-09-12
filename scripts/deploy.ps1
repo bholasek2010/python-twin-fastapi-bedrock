@@ -15,7 +15,7 @@ Set-Location ..
 
 # 2. Terraform workspace & apply
 Set-Location terraform
-# Old line:
+# Oldline:
 #terraform init -input=false
 
 # New lines:
