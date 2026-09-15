@@ -121,7 +121,7 @@ export default function Twin() {
                             <img 
                                 src="/avatar.png" 
                                 alt="Digital Twin Avatar" 
-                                className="w-20 h-20 rounded-full mx-auto mb-3 border-2 border-gray-300"
+                                className="w-20 h-20 rounded-full mx-auto mb-3"
                             />
                         ) : (
                             <Bot className="w-12 h-12 mx-auto mb-3 text-gray-400" />
@@ -144,7 +144,7 @@ export default function Twin() {
                                     <img 
                                         src="/avatar.png" 
                                         alt="Digital Twin Avatar" 
-                                        className="w-8 h-8 rounded-full border border-slate-300"
+                                        className="w-8 h-8 rounded-full"
                                     />
                                 ) : (
                                     <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
@@ -188,7 +188,7 @@ export default function Twin() {
                                 <img 
                                     src="/avatar.png" 
                                     alt="Digital Twin Avatar" 
-                                    className="w-8 h-8 rounded-full border border-slate-300"
+                                    className="w-8 h-8 rounded-full"
                                 />
                             ) : (
                                 <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
