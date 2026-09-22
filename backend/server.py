@@ -42,8 +42,10 @@ MEMORY_DIR = os.getenv("MEMORY_DIR", "../memory")
 
 # Initialize S3 client if needed
 if USE_S3:
-    s3_client = boto3.client("s3")
-
+    s3_client = boto3.client(
+        service_name="s3", 
+        region_name=os.getenv("DEFAULT_AWS_REGION", "us-east-1")
+    )
 
 # Request/Response models
 class ChatRequest(BaseModel):
