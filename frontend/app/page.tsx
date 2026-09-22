@@ -9,16 +9,10 @@ export default function Home() {
             AI on a Page
           </h1>
           <div className="grid grid-cols-3 gap-10 p-2">
-            <div className='w-[450px] h-[350px]'>
+            <div className='w-[750px] h-[550px]'>
             <p className='text-lg text-center font-bold text-gray-600 mb-0'>Prompt Chaining</p>
             <p className='text-xs text-center text-gray-600 mb-3'>Frontend:Browser-&gt;CDN-&gt;Static Web
             <br></br>Backend:API Gateway-&gt;Serverless Function-&gt;Managed LLM-&gt;Conversation Memory</p>
-              <Twin />
-            </div>
-            <div className='w-[450px] h-[350px]'>
-              <Twin />
-            </div>
-            <div className='w-[450px] h-[350px]'>
               <Twin />
             </div>
           </div>
