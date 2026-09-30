@@ -106,7 +106,7 @@ export default function Twin() {
         <div className="flex flex-col h-full bg-gray-50 rounded-lg shadow-lg">
             {/* Header */}
             <div className="bg-gradient-to-r from-slate-700 to-slate-800 text-white p-4 rounded-t-lg">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
+                <h2 className="text-md font-semibold flex items-center gap-2">
                     <Bot className="w-6 h-6" />
                     Conversational Twin
                 </h2>
@@ -123,7 +123,7 @@ export default function Twin() {
                                 className="w-20 h-20 rounded-full mx-auto mb-3"
                             />
                         ) : (
-                            <Bot className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                            <Bot className="w-20 h-20 mx-auto mb-3 text-gray-400" />
                         )}
                         <p>Hello! I&apos;m a Conversational Twin.</p>
                         <p className="text-sm mt-2">Ask me anything about my background and experience!</p>
@@ -143,18 +143,18 @@ export default function Twin() {
                                     <img 
                                         src="/avatar.png" 
                                         alt="Digital Twin Avatar" 
-                                        className="w-8 h-8 rounded-full"
+                                        className="w-11 h-11 rounded-full"
                                     />
                                 ) : (
-                                    <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
-                                        <Bot className="w-5 h-5 text-white" />
+                                    <div className="w-11 h-11 bg-slate-700 rounded-full flex items-center justify-center">
+                                        <Bot className="w-11 h-11 text-white" />
                                     </div>
                                 )}
                             </div>
                         )}
 
                         <div
-                            className={`max-w-[70%] rounded-lg p-3 ${
+                            className={`max-w-[80%] rounded-lg p-3 ${
                                 message.role === 'user'
                                     ? 'bg-slate-700 text-white'
                                     : 'bg-white border border-gray-200 text-gray-800'
@@ -172,7 +172,7 @@ export default function Twin() {
 
                         {message.role === 'user' && (
                             <div className="flex-shrink-0">
-                                <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center">
+                                <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center">
                                     <User className="w-5 h-5 text-white" />
                                 </div>
                             </div>
@@ -187,11 +187,11 @@ export default function Twin() {
                                 <img 
                                     src="/avatar.png" 
                                     alt="Digital Twin Avatar" 
-                                    className="w-8 h-8 rounded-full"
+                                    className="w-11 h-11 rounded-full"
                                 />
                             ) : (
-                                <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
-                                    <Bot className="w-5 h-5 text-white" />
+                                <div className="w-11 h-11 bg-slate-700 rounded-full flex items-center justify-center">
+                                    <Bot className="w-11 h-11 text-white" />
                                 </div>
                             )}
                         </div>
@@ -209,7 +209,7 @@ export default function Twin() {
             </div>
 
             {/* Input */}
-            <div className="border-t border-gray-200 p-4 bg-white rounded-b-lg">
+            <div className="border-t border-gray-200 p-3 bg-white rounded-b-lg">
                 <div className="flex gap-2">
                     <input
                         ref={inputRef}

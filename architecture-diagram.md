@@ -1,6 +1,41 @@
 # AI Digital Twin — technical architecture
 
-C4 Level 2 (containers) plus the chat request path. Production splits the UI and API across AWS. Locally the UI is Next.js on port 3000 and the API is FastAPI on port 8000.
+C4 Level 1 (context), Level 2 (containers), and a Level 2 zoom of the Lambda API, plus the chat request path. Production splits the UI and API across AWS. Locally the UI is Next.js on port 3000 and the API is FastAPI on port 8000.
+
+## Context
+
+C4 Level 1. The product is one software system. People and outside services sit around it.
+
+```mermaid
+---
+config:
+  theme: default
+  themeVariables:
+    background: "#ffffff"
+---
+flowchart LR
+    visitor["Website Visitor<br/>Person"]
+    owner["Twin Owner<br/>Person"]
+    twin["AI Digital Twin<br/>Software system"]
+    bedrock["Amazon Bedrock<br/>External system"]
+    s3["Amazon S3 memory<br/>External system"]
+    github["GitHub<br/>External system"]
+
+    visitor -->|"chat messages<br/>POST chat"| twin
+    twin -->|"ChatResponse JSON"| visitor
+    owner -->|"persona data + deploy"| twin
+    twin -->|"prompt + history"| bedrock
+    bedrock -->|"assistant text<br/>Nova converse"| twin
+    twin -->|"GetObject / PutObject"| s3
+    s3 -->|"session JSON"| twin
+    github -->|"CI/CD deploy"| twin
+```
+
+The browser never calls Bedrock or S3. The FastAPI API (Lambda in production) is the only client of those two services.
+
+## Containers
+
+C4 Level 2. Optional C4 block, then the flowchart that actually renders.
 
 ```mermaid
 ---
@@ -55,10 +90,10 @@ flowchart TB
 
     subgraph twin["AI Digital Twin"]
         cf["CloudFront<br/>CDN, HTTPS"]
-        ui["Frontend S3<br/>Next.js static chat UI"]
+        ui["Frontend S3<br/>twin.tsx, page.tsx"]
         apigw["API Gateway<br/>POST /chat, GET /health"]
-        api["Lambda API<br/>FastAPI + Mangum"]
-        mem["Memory S3<br/>session JSON"]
+        api["Lambda API<br/>server.py, Mangum"]
+        mem["Memory S3<br/>session_id.json"]
     end
 
     bedrock[Amazon Bedrock]
@@ -68,12 +103,64 @@ flowchart TB
     cf -->|cached static files| ui
     ui -->|"POST /chat { message, session_id }"| apigw
     apigw -->|AWS_PROXY| api
-    api -->|load / save history| mem
+    api -->|JSON ChatResponse| ui
+    api -->|GetObject / PutObject| mem
+    mem -->|conversation history| api
     api -->|converse prompt + history| bedrock
     bedrock -->|assistant reply| api
-    api --> cw
-    owner -->|persona in backend/data| api
-    github -->|deploy| twin
+    api -->|logs| cw
+    owner -->|backend/data persona| api
+    github -->|deploy.sh + terraform| twin
+```
+
+## Lambda API
+
+Flow of one `POST /chat` request through the Lambda API.
+
+```mermaid
+---
+config:
+  theme: default
+  themeVariables:
+    background: "#ffffff"
+---
+flowchart TB
+    apigw["API Gateway<br/>POST /chat { message, session_id }"]
+    handler["lambda_handler<br/>Mangum adapter"]
+    app["FastAPI app<br/>server.py"]
+    chat["chat()"]
+    session{"session_id<br/>present?"}
+    newId["Create uuid session_id"]
+    load["load_conversation()"]
+    memGet["Memory S3<br/>GetObject session_id.json"]
+    resources["resources.py"]
+    subgraph files["Persona files backend/data"]
+        facts["facts.json"]
+        linkedin["linkedin.pdf"]
+        style["style.txt"]
+        summary["summary.txt"]
+    end
+    persona["prompt()<br/>context.py"]
+    bedrockCall["call_bedrock()"]
+    bedrock["Amazon Bedrock<br/>Nova converse"]
+    append["Append user + assistant turns"]
+    save["save_conversation()"]
+    memPut["Memory S3<br/>PutObject session_id.json"]
+    resp["ChatResponse JSON<br/>{ response, session_id }"]
+
+    apigw --> handler --> app --> chat --> session
+    session -->|no| newId --> load
+    session -->|yes| load
+    load --> memGet
+    facts --> resources
+    linkedin --> resources
+    style --> resources
+    summary --> resources
+    resources --> persona
+    memGet --> bedrockCall
+    persona --> bedrockCall
+    bedrockCall --> bedrock --> append --> save --> memPut --> resp
+    resp --> apigw
 ```
 
 ## Request path
