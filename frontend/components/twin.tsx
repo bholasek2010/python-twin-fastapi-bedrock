@@ -19,12 +19,13 @@ export default function Twin() {
     const inputRef = useRef<HTMLInputElement>(null);
 
     const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: "nearest", inline: "nearest" });
     };
 
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
 
     const sendMessage = async () => {
         if (!input.trim() || isLoading) return;
