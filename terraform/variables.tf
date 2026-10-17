@@ -51,3 +51,10 @@ variable "root_domain" {
   type        = string
   default     = ""
 }
+
+variable "openai_api_key" {
+  description = "OpenAI API key for Whisper STT and TTS"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

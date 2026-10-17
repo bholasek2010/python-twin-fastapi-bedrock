@@ -483,6 +483,7 @@ $deployBucket = "twin-deploy-$timestamp"
 aws s3 mb s3://$deployBucket --region $env:DEFAULT_AWS_REGION
 
 # Upload your zip file to S3
+
 aws s3 cp lambda-deployment.zip s3://$deployBucket/ --region $env:DEFAULT_AWS_REGION
 
 # Update Lambda function from S3

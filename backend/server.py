@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
@@ -7,8 +8,10 @@ from typing import Optional, List, Dict
 import json
 import uuid
 from datetime import datetime
+import io
 import boto3
 from botocore.exceptions import ClientError
+from openai import OpenAI
 from context import prompt
 
 # Load environment variables
@@ -17,7 +20,10 @@ load_dotenv()
 app = FastAPI()
 
 # Configure CORS
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001",
+).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -62,6 +68,20 @@ class Message(BaseModel):
     role: str
     content: str
     timestamp: str
+
+
+class TtsRequest(BaseModel):
+    text: str
+
+
+def get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY is not configured",
+        )
+    return OpenAI(api_key=api_key)
 
 
 # Memory management functions
@@ -222,6 +242,66 @@ async def get_conversation(session_id: str):
         conversation = load_conversation(session_id)
         return {"session_id": session_id, "messages": conversation}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+MAX_AUDIO_BYTES = 1_500_000
+MAX_TRANSCRIPT_CHARS = 100;
+
+
+@app.post("/transcribe")
+async def transcribe(file: UploadFile = File(...)):
+    """Convert recorded speech to text with OpenAI Whisper."""
+    try:
+        audio_bytes = await file.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio upload")
+        if len(audio_bytes) > MAX_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio is too large. Keep recordings under {MAX_AUDIO_BYTES // 1000} KB.",
+            )
+
+        filename = file.filename or "recording.webm"
+        client = get_openai_client()
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(filename, io.BytesIO(audio_bytes), file.content_type or "audio/webm"),
+        )
+        return {"text": transcript.text.strip()[:MAX_TRANSCRIPT_CHARS]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in transcribe endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/speak")
+@app.post("/tts")
+async def tts(request: TtsRequest):
+    """Stream OpenAI text-to-speech audio for an assistant reply."""
+    text = (request.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    # tts-1 accepts up to 4096 input characters
+    text = text[:4096]
+    client = get_openai_client()
+
+    try:
+        speech = client.audio.speech.create(
+            model="tts-1",
+            voice=os.getenv("OPENAI_TTS_VOICE", "alloy"),
+            input=text,
+            response_format="mp3",
+        )
+        return StreamingResponse(
+            speech.iter_bytes(),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        print(f"Error in tts endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -137,6 +137,7 @@ resource "aws_lambda_function" "api" {
       S3_BUCKET        = aws_s3_bucket.memory.id
       USE_S3           = "true"
       BEDROCK_MODEL_ID = var.bedrock_model_id
+      OPENAI_API_KEY   = var.openai_api_key
     }
   }
 
@@ -193,6 +194,24 @@ resource "aws_apigatewayv2_route" "post_chat" {
 resource "aws_apigatewayv2_route" "get_health" {
   api_id    = aws_apigatewayv2_api.main.id
   route_key = "GET /health"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_transcribe" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /transcribe"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_tts" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /tts"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_speak" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /speak"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 

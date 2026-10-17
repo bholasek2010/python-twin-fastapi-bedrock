@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Mic, Square, Volume2, VolumeX } from 'lucide-react';
 
 interface Message {
     id: string;
@@ -10,13 +10,30 @@ interface Message {
     timestamp: Date;
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const MAX_RECORDING_SECONDS = 10;
+const MAX_AUDIO_BYTES = 1_500_000;
+const MAX_INPUT_CHARS = 100;
+
 export default function Twin() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(MAX_RECORDING_SECONDS);
+    const [isTranscribing, setIsTranscribing] = useState(false);
+    const [ttsEnabled, setTtsEnabled] = useState(true);
     const [sessionId, setSessionId] = useState<string>('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const mediaStreamRef = useRef<MediaStream | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+    const audioBytesRef = useRef(0);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const ttsUrlRef = useRef<string | null>(null);
+    const recordingTimerRef = useRef<number | null>(null);
+    const recordingCountdownRef = useRef<number | null>(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: "nearest", inline: "nearest" });
@@ -26,23 +43,79 @@ export default function Twin() {
         scrollToBottom();
     }, [messages]);
 
+    useEffect(() => {
+        return () => {
+            stopPlayback();
+            clearRecordingTimers();
+            mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        };
+    }, []);
 
-    const sendMessage = async () => {
-        if (!input.trim() || isLoading) return;
+    const stopPlayback = () => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.src = '';
+            audioRef.current = null;
+        }
+        if (ttsUrlRef.current) {
+            URL.revokeObjectURL(ttsUrlRef.current);
+            ttsUrlRef.current = null;
+        }
+    };
+
+    const revealAssistantText = async (id: string, fullText: string) => {
+        const chunks = fullText.split(/(\s+)/);
+        let acc = '';
+        for (const chunk of chunks) {
+            acc += chunk;
+            const shown = acc;
+            setMessages((prev) =>
+                prev.map((message) =>
+                    message.id === id ? { ...message, content: shown } : message
+                )
+            );
+            await new Promise((resolve) => setTimeout(resolve, 28));
+        }
+    };
+
+    const playTts = async (text: string) => {
+        if (!ttsEnabled || !text.trim()) return;
+        stopPlayback();
+        try {
+            const response = await fetch(`${API_URL}/tts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text }),
+            });
+            if (!response.ok) throw new Error('TTS request failed');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            ttsUrlRef.current = url;
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            await audio.play();
+        } catch (error) {
+            console.error('TTS error:', error);
+        }
+    };
+
+    const sendMessage = async (text?: string) => {
+        const content = (text ?? input).trim().slice(0, MAX_INPUT_CHARS);
+        if (!content || isLoading || isRecording || isTranscribing) return;
 
         const userMessage: Message = {
             id: Date.now().toString(),
             role: 'user',
-            content: input,
+            content,
             timestamp: new Date(),
         };
 
-        setMessages(prev => [...prev, userMessage]);
+        setMessages((prev) => [...prev, userMessage]);
         setInput('');
         setIsLoading(true);
 
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/chat`, {
+            const response = await fetch(`${API_URL}/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -64,11 +137,14 @@ export default function Twin() {
             const assistantMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
-                content: data.response,
+                content: '',
                 timestamp: new Date(),
             };
 
-            setMessages(prev => [...prev, assistantMessage]);
+            setMessages((prev) => [...prev, assistantMessage]);
+            setIsLoading(false);
+            void playTts(data.response);
+            await revealAssistantText(assistantMessage.id, data.response);
         } catch (error) {
             console.error('Error:', error);
             const errorMessage: Message = {
@@ -77,27 +153,147 @@ export default function Twin() {
                 content: 'Sorry, I encountered an error. Please try again.',
                 timestamp: new Date(),
             };
-            setMessages(prev => [...prev, errorMessage]);
+            setMessages((prev) => [...prev, errorMessage]);
         } finally {
             setIsLoading(false);
-            // Refocus the input after message is sent
             setTimeout(() => {
                 inputRef.current?.focus();
             }, 100);
         }
     };
 
-    const handleKeyPress = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
+    const transcribeAndSend = async (audioBlob: Blob) => {
+        setIsTranscribing(true);
+        try {
+            const formData = new FormData();
+            const extension = audioBlob.type.includes('mp4') ? 'mp4' : 'webm';
+            formData.append('file', audioBlob, `recording.${extension}`);
+
+            const response = await fetch(`${API_URL}/transcribe`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!response.ok) throw new Error('Transcription failed');
+
+            const data = await response.json();
+            const transcript = (data.text || '').trim().slice(0, MAX_INPUT_CHARS);
+            if (!transcript) {
+                throw new Error('No speech detected');
+            }
+            await sendMessage(transcript);
+        } catch (error) {
+            console.error('Transcription error:', error);
+            const errorMessage: Message = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                content: 'Sorry, I could not transcribe that recording. Please try again.',
+                timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, errorMessage]);
+        } finally {
+            setIsTranscribing(false);
         }
     };
 
-    // Check if avatar exists
+    const clearRecordingTimers = () => {
+        if (recordingTimerRef.current !== null) {
+            window.clearTimeout(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        if (recordingCountdownRef.current !== null) {
+            window.clearInterval(recordingCountdownRef.current);
+            recordingCountdownRef.current = null;
+        }
+    };
+
+    const stopRecording = () => {
+        clearRecordingTimers();
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') {
+            recorder.stop();
+        }
+        setIsRecording(false);
+        setRecordingSecondsLeft(MAX_RECORDING_SECONDS);
+    };
+
+    const startRecording = async () => {
+        if (isLoading || isTranscribing) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaStreamRef.current = stream;
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm')
+                ? 'audio/webm'
+                : MediaRecorder.isTypeSupported('audio/mp4')
+                  ? 'audio/mp4'
+                  : '';
+            const recorder = mimeType
+                ? new MediaRecorder(stream, { mimeType })
+                : new MediaRecorder(stream);
+            audioChunksRef.current = [];
+            audioBytesRef.current = 0;
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                    audioBytesRef.current += event.data.size;
+                    if (audioBytesRef.current >= MAX_AUDIO_BYTES) {
+                        stopRecording();
+                    }
+                }
+            };
+            recorder.onstop = async () => {
+                clearRecordingTimers();
+                stream.getTracks().forEach((track) => track.stop());
+                mediaStreamRef.current = null;
+                mediaRecorderRef.current = null;
+                const blob = new Blob(audioChunksRef.current, {
+                    type: recorder.mimeType || 'audio/webm',
+                });
+                audioChunksRef.current = [];
+                audioBytesRef.current = 0;
+                if (blob.size > 0) {
+                    await transcribeAndSend(blob);
+                }
+            };
+            mediaRecorderRef.current = recorder;
+            recorder.start(250);
+            setRecordingSecondsLeft(MAX_RECORDING_SECONDS);
+            setIsRecording(true);
+            recordingCountdownRef.current = window.setInterval(() => {
+                setRecordingSecondsLeft((seconds) => Math.max(0, seconds - 1));
+            }, 1000);
+            recordingTimerRef.current = window.setTimeout(() => {
+                stopRecording();
+            }, MAX_RECORDING_SECONDS * 1000);
+        } catch (error) {
+            console.error('Microphone error:', error);
+            setIsRecording(false);
+            const errorMessage: Message = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                content: 'Microphone access is required to record a message.',
+                timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, errorMessage]);
+        }
+    };
+
+    const toggleRecording = () => {
+        if (isRecording) {
+            stopRecording();
+        } else {
+            void startRecording();
+        }
+    };
+
+    const handleKeyPress = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void sendMessage();
+        }
+    };
+
     const [hasAvatar, setHasAvatar] = useState(false);
     useEffect(() => {
-        // Check if avatar.png exists
         fetch('/avatar.png', { method: 'HEAD' })
             .then(res => setHasAvatar(res.ok))
             .catch(() => setHasAvatar(false));
@@ -110,6 +306,24 @@ export default function Twin() {
                 <h2 className="text-md font-semibold flex items-center gap-2">
                     <Bot className="w-6 h-6" />
                     Conversational Twin
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setTtsEnabled((enabled) => {
+                                if (enabled) stopPlayback();
+                                return !enabled;
+                            });
+                        }}
+                        className="ml-auto p-1.5 rounded-md hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                        title={ttsEnabled ? 'Mute spoken replies' : 'Unmute spoken replies'}
+                        aria-label={ttsEnabled ? 'Mute spoken replies' : 'Unmute spoken replies'}
+                    >
+                        {ttsEnabled ? (
+                            <Volume2 className="w-4 h-4" />
+                        ) : (
+                            <VolumeX className="w-4 h-4" />
+                        )}
+                    </button>
                 </h2>
             </div>
 
@@ -181,7 +395,7 @@ export default function Twin() {
                     </div>
                 ))}
 
-                {isLoading && (
+                {(isLoading || isTranscribing) && (
                     <div className="flex gap-3 justify-start">
                         <div className="flex-shrink-0">
                             {hasAvatar ? (
@@ -212,20 +426,58 @@ export default function Twin() {
             {/* Input */}
             <div className="border-t border-gray-200 p-3 bg-white rounded-b-lg">
                 <div className="flex gap-2">
+                    <div className="relative flex-1">
                     <input
                         ref={inputRef}
                         type="text"
                         value={input}
-                        onChange={(e) => setInput(e.target.value)}
+                        onChange={(e) => setInput(e.target.value.slice(0, MAX_INPUT_CHARS))}
                         onKeyDown={handleKeyPress}
-                        placeholder="Type your message..."
-                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-600 focus:border-transparent text-gray-800"
-                        disabled={isLoading}
+                        maxLength={MAX_INPUT_CHARS}
+                        placeholder={
+                            isRecording
+                                ? `Recording... ${recordingSecondsLeft}s left`
+                                : isTranscribing
+                                  ? 'Transcribing...'
+                                  : `Type or tap the mic (${MAX_RECORDING_SECONDS}s max)...`
+                        }
+                        className="w-full px-4 py-2 pr-14 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-600 focus:border-transparent text-gray-800"
+                        disabled={isLoading || isRecording || isTranscribing}
                         autoFocus
                     />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+                        {input.length}/{MAX_INPUT_CHARS}
+                    </span>
+                    </div>
                     <button
-                        onClick={sendMessage}
-                        disabled={!input.trim() || isLoading}
+                        type="button"
+                        onClick={toggleRecording}
+                        disabled={isLoading || isTranscribing}
+                        className={`px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+                            isRecording
+                                ? 'bg-red-600 text-white hover:bg-red-700'
+                                : 'bg-slate-700 text-white hover:bg-slate-800'
+                        }`}
+                        title={
+                            isRecording
+                                ? `Stop recording (${recordingSecondsLeft}s left)`
+                                : `Record a voice message (${MAX_RECORDING_SECONDS}s max)`
+                        }
+                        aria-label={
+                            isRecording
+                                ? `Stop recording, ${recordingSecondsLeft} seconds left`
+                                : `Record a voice message, ${MAX_RECORDING_SECONDS} second maximum`
+                        }
+                    >
+                        {isRecording ? (
+                            <Square className="w-5 h-5" />
+                        ) : (
+                            <Mic className="w-5 h-5" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => void sendMessage()}
+                        disabled={!input.trim() || isLoading || isRecording || isTranscribing}
                         className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                         <Send className="w-5 h-5" />
