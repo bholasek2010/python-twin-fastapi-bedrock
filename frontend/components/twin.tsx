@@ -8,6 +8,44 @@ interface Message {
     role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
+    emotion?: string;
+}
+
+const EMOTIONS = [
+    'happy',
+    'sad',
+    'curious',
+    'thoughtful',
+    'surprised',
+    'excited',
+    'confused',
+    'concerned',
+    'friendly',
+    'neutral',
+] as const;
+
+function emotionIcon(emotion?: string) {
+    const name = emotion && EMOTIONS.includes(emotion as (typeof EMOTIONS)[number])
+        ? emotion
+        : 'neutral';
+    return `/favicons/${name}.svg`;
+}
+
+function classifyQuestionTone(text: string): string {
+    const q = (text || '').trim().toLowerCase();
+    if (!q) return 'neutral';
+    const has = (...words: string[]) => words.some((word) => q.includes(word));
+
+    if (has('sorry', 'sad', 'unhappy', 'depressed', 'lonely', 'upset', 'hurt')) return 'sad';
+    if (has('worried', 'concerned', 'afraid', 'scared', 'anxious', 'risk', 'problem', 'wrong')) return 'concerned';
+    if (has('wow', 'whoa', 'no way', 'unbelievable', 'shock')) return 'surprised';
+    if (has('excited', "can't wait", 'amazing', 'awesome', 'love this', 'congrats')) return 'excited';
+    if (has('confused', "don't understand", 'dont understand', 'unclear', 'lost me', 'huh')) return 'confused';
+    if (has('thank', 'thanks', 'appreciate', 'nice to meet', 'hello', 'hey', 'how are you') || q === 'hi' || q.startsWith('hi ')) return 'friendly';
+    if (has('happy', 'glad', 'great news', 'wonderful', 'smile')) return 'happy';
+    if (has('think', 'thoughts', 'reflect', 'consider', 'opinion', 'should i', 'advice')) return 'thoughtful';
+    if (has('why', 'how', 'what', 'when', 'where', 'who', 'curious') || q.endsWith('?')) return 'curious';
+    return 'neutral';
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -139,6 +177,9 @@ export default function Twin() {
                 role: 'assistant',
                 content: '',
                 timestamp: new Date(),
+                emotion: (EMOTIONS as readonly string[]).includes(data.emotion)
+                    ? data.emotion
+                    : classifyQuestionTone(content),
             };
 
             setMessages((prev) => [...prev, assistantMessage]);
@@ -152,6 +193,7 @@ export default function Twin() {
                 role: 'assistant',
                 content: 'Sorry, I encountered an error. Please try again.',
                 timestamp: new Date(),
+                emotion: 'concerned',
             };
             setMessages((prev) => [...prev, errorMessage]);
         } finally {
@@ -188,6 +230,7 @@ export default function Twin() {
                 role: 'assistant',
                 content: 'Sorry, I could not transcribe that recording. Please try again.',
                 timestamp: new Date(),
+                emotion: 'concerned',
             };
             setMessages((prev) => [...prev, errorMessage]);
         } finally {
@@ -272,6 +315,7 @@ export default function Twin() {
                 role: 'assistant',
                 content: 'Microphone access is required to record a message.',
                 timestamp: new Date(),
+                emotion: 'concerned',
             };
             setMessages((prev) => [...prev, errorMessage]);
         }
@@ -333,7 +377,7 @@ export default function Twin() {
                     <div className="text-center text-gray-500 mt-8">
                         {hasAvatar ? (
                             <img 
-                                src="/avatar.png" 
+                                src="./favicons/friendly.svg" 
                                 alt="Digital Twin Avatar" 
                                 className="w-20 h-20 rounded-full mx-auto mb-3"
                             />
@@ -354,17 +398,12 @@ export default function Twin() {
                     >
                         {message.role === 'assistant' && (
                             <div className="flex-shrink-0">
-                                {hasAvatar ? (
-                                    <img 
-                                        src="/avatar.png" 
-                                        alt="Digital Twin Avatar" 
-                                        className="w-11 h-11 rounded-full"
-                                    />
-                                ) : (
-                                    <div className="w-11 h-11 bg-slate-700 rounded-full flex items-center justify-center">
-                                        <Bot className="w-11 h-11 text-white" />
-                                    </div>
-                                )}
+                                <img
+                                    src={emotionIcon(message.emotion)}
+                                    alt={message.emotion || 'neutral'}
+                                    title={message.emotion || 'neutral'}
+                                    className="w-11 h-11 rounded-full bg-white border border-gray-300"
+                                />
                             </div>
                         )}
 
@@ -398,17 +437,11 @@ export default function Twin() {
                 {(isLoading || isTranscribing) && (
                     <div className="flex gap-3 justify-start">
                         <div className="flex-shrink-0">
-                            {hasAvatar ? (
-                                <img 
-                                    src="/avatar.png" 
-                                    alt="Digital Twin Avatar" 
-                                    className="w-11 h-11 rounded-full"
-                                />
-                            ) : (
-                                <div className="w-11 h-11 bg-slate-700 rounded-full flex items-center justify-center">
-                                    <Bot className="w-11 h-11 text-white" />
-                                </div>
-                            )}
+                            <img
+                                src={emotionIcon(isTranscribing ? 'thoughtful' : 'curious')}
+                                alt={isTranscribing ? 'thoughtful' : 'curious'}
+                                className="w-11 h-11 rounded-full bg-white border border-gray-300"
+                            />
                         </div>
                         <div className="bg-white border border-gray-200 rounded-lg p-3">
                             <div className="flex space-x-2">

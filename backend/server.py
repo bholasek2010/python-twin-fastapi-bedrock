@@ -62,6 +62,80 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     session_id: str
+    emotion: str = "neutral"
+
+
+EMOTIONS = (
+    "happy",
+    "sad",
+    "curious",
+    "thoughtful",
+    "surprised",
+    "excited",
+    "confused",
+    "concerned",
+    "friendly",
+    "neutral",
+)
+
+
+def classify_question_tone_heuristic(text: str) -> str:
+    """Keyword fallback when the model is unavailable."""
+    q = (text or "").strip().lower()
+    if not q:
+        return "neutral"
+
+    def has(*words: str) -> bool:
+        return any(word in q for word in words)
+
+    if has("sorry", "sad", "unhappy", "depressed", "miss you", "lonely", "upset", "hurt"):
+        return "sad"
+    if has("worried", "concerned", "afraid", "scared", "anxious", "risk", "problem", "wrong"):
+        return "concerned"
+    if has("wow", "whoa", "no way", "unbelievable", "shock", "really?!"):
+        return "surprised"
+    if has("excited", "can't wait", "amazing", "awesome", "love this", "congrats"):
+        return "excited"
+    if has("confused", "don't understand", "dont understand", "unclear", "lost me", "huh"):
+        return "confused"
+    if has("thank", "thanks", "appreciate", "nice to meet", "hello", "hey", "how are you"):
+        return "friendly"
+    if q in {"hi", "hi!", "hey!", "hello!"} or q.startswith("hi ") or q.startswith("hey "):
+        return "friendly"
+    if has("happy", "glad", "great news", "wonderful", "smile"):
+        return "happy"
+    if has("think", "thoughts", "reflect", "consider", "opinion", "should i", "advice"):
+        return "thoughtful"
+    if has("why", "how", "what", "when", "where", "who", "curious") or q.endswith("?"):
+        return "curious"
+    return "neutral"
+
+
+def classify_question_tone(text: str, reply: str = "") -> str:
+    """Pick a favicon emotion from the user's question, using the model when possible."""
+    try:
+        client = get_openai_client()
+        prompt = (
+            "Classify the user's emotional tone or intent. "
+            "Reply with exactly one word from this list: "
+            + ", ".join(EMOTIONS)
+            + ".\n\nUser question: "
+            + (text or "").strip()
+        )
+        if reply:
+            prompt += "\nAssistant reply (context only): " + reply[:400]
+        result = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=8,
+            temperature=0,
+        )
+        word = (result.choices[0].message.content or "").strip().lower().strip(" .!\"'")
+        if word in EMOTIONS:
+            return word
+    except Exception as e:
+        print(f"Emotion classification fallback: {e}")
+    return classify_question_tone_heuristic(text)
 
 
 class Message(BaseModel):
@@ -226,7 +300,14 @@ async def chat(request: ChatRequest):
         # Save conversation
         save_conversation(session_id, conversation)
 
-        return ChatResponse(response=assistant_response, session_id=session_id)
+        emotion = classify_question_tone(request.message, assistant_response)
+        if emotion not in EMOTIONS:
+            emotion = "neutral"
+        return ChatResponse(
+            response=assistant_response,
+            session_id=session_id,
+            emotion=emotion,
+        )
 
     except HTTPException:
         raise
