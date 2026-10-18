@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
-from typing import Optional, List, Dict
+from typing import Literal, Optional, List, Dict
 import json
 import uuid
 from datetime import datetime
@@ -90,6 +90,50 @@ EMOTIONS = (
     "neutral",
 )
 
+EmotionFace = Literal[
+    "sorry face",
+    "sad face",
+    "unhappy face",
+    "depressed face",
+    "lonely face",
+    "upset face",
+    "hurt face",
+    "worried face",
+    "concerned face",
+    "afraid face",
+    "scared face",
+    "anxious face",
+    "surprised face",
+    "shocked face",
+    "excited face",
+    "confused face",
+    "grateful face",
+    "friendly face",
+    "happy face",
+    "thoughtful face",
+    "curious face",
+    "neutral face",
+]
+
+
+class EmotionClassification(BaseModel):
+    label: EmotionFace
+
+
+def parse_emotion_label(raw: str) -> str | None:
+    """Accept labels like 'Anxious', 'anxious face', or '**anxious**'."""
+    cleaned = (raw or "").lower()
+    for ch in "*_`#\"'.,!?:;()[]":
+        cleaned = cleaned.replace(ch, " ")
+    tokens = cleaned.split()
+    for emotion in sorted(EMOTIONS, key=len, reverse=True):
+        if emotion in tokens:
+            return emotion
+    for emotion in sorted(EMOTIONS, key=len, reverse=True):
+        if emotion in cleaned:
+            return emotion
+    return None
+
 
 def classify_question_tone_heuristic(text: str) -> str:
     """Keyword fallback when the model is unavailable."""
@@ -118,7 +162,7 @@ def classify_question_tone_heuristic(text: str) -> str:
         return "afraid"
     if has("scared"):
         return "scared"
-    if has("anxious"):
+    if has("anxious", "anxiety", "nervous", "uneasy", "tense"):
         return "anxious"
     if has("worried"):
         return "worried"
@@ -146,30 +190,39 @@ def classify_question_tone_heuristic(text: str) -> str:
 
 
 def classify_question_tone(text: str, reply: str = "") -> str:
-    """Pick a favicon emotion from the user's question, using the model when possible."""
+    """Pick a favicon emotion from the assistant reply, using OpenAI when possible."""
+    reply_text = (reply or text or "").strip()
     try:
         client = get_openai_client()
-        prompt = (
-            "Classify the user's emotional tone or intent. "
-            "Reply with exactly one word from this list: "
-            + ", ".join(EMOTIONS)
-            + ".\n\nUser question: "
-            + (text or "").strip()
-        )
-        if reply:
-            prompt += "\nAssistant reply (context only): " + reply[:400]
-        result = client.chat.completions.create(
+        result = client.chat.completions.parse(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=8,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the emotional tone of the assistant reply. "
+                        "Choose exactly one allowed face label. "
+                        "Use 'anxious face' when the reply sounds nervous, uneasy, or tense."
+                    ),
+                },
+                {"role": "user", "content": reply_text[:2000]},
+            ],
+            response_format=EmotionClassification,
             temperature=0,
         )
-        word = (result.choices[0].message.content or "").strip().lower().strip(" .!\"'")
-        if word in EMOTIONS:
+        message = result.choices[0].message
+        raw_label = (
+            message.parsed.label
+            if message.parsed
+            else (message.content or "")
+        )
+        print(f"Emotion classifier raw: {raw_label!r}")
+        word = parse_emotion_label(raw_label)
+        if word:
             return word
     except Exception as e:
         print(f"Emotion classification fallback: {e}")
-    return classify_question_tone_heuristic(text)
+    return classify_question_tone_heuristic(reply_text)
 
 
 class Message(BaseModel):
@@ -334,7 +387,7 @@ async def chat(request: ChatRequest):
         # Save conversation
         save_conversation(session_id, conversation)
 
-        emotion = classify_question_tone(request.message, assistant_response)
+        emotion = classify_question_tone(assistant_response)
         if emotion not in EMOTIONS:
             emotion = "neutral"
         return ChatResponse(

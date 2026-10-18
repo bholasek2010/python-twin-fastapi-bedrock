@@ -36,10 +36,17 @@ const EMOTIONS = [
     'neutral',
 ] as const;
 
+function parseEmotionLabel(raw?: string): string | undefined {
+    if (!raw) return undefined;
+    const cleaned = raw.toLowerCase().replace(/[*_`#"'.,!?:;()[\]]/g, ' ');
+    const tokens = cleaned.split(/\s+/).filter(Boolean);
+    const ranked = [...EMOTIONS].sort((a, b) => b.length - a.length);
+    return ranked.find((emotion) => tokens.includes(emotion))
+        ?? ranked.find((emotion) => cleaned.includes(emotion));
+}
+
 function emotionIcon(emotion?: string) {
-    const name = emotion && EMOTIONS.includes(emotion as (typeof EMOTIONS)[number])
-        ? emotion
-        : 'neutral';
+    const name = parseEmotionLabel(emotion) || 'neutral';
     return `/favicons/${name}.svg`;
 }
 
@@ -57,7 +64,7 @@ function classifyQuestionTone(text: string): string {
     if (has('sad')) return 'sad';
     if (has('afraid')) return 'afraid';
     if (has('scared')) return 'scared';
-    if (has('anxious')) return 'anxious';
+    if (has('anxious', 'anxiety', 'nervous', 'uneasy', 'tense')) return 'anxious';
     if (has('worried')) return 'worried';
     if (has('concerned', 'risk', 'problem', 'wrong')) return 'concerned';
     if (has('shock', 'unbelievable')) return 'shocked';
@@ -73,7 +80,7 @@ function classifyQuestionTone(text: string): string {
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-const MAX_RECORDING_SECONDS = 10;
+const MAX_RECORDING_SECONDS = 5;
 const MAX_AUDIO_BYTES = 1_500_000;
 const MAX_INPUT_CHARS = 100;
 
@@ -84,6 +91,7 @@ export default function Twin() {
     const [isRecording, setIsRecording] = useState(false);
     const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(MAX_RECORDING_SECONDS);
     const [isTranscribing, setIsTranscribing] = useState(false);
+    const [isSpeaking, setIsSpeaking] = useState(false);
     const [ttsEnabled, setTtsEnabled] = useState(true);
     const [sessionId, setSessionId] = useState<string>('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -96,6 +104,7 @@ export default function Twin() {
     const ttsUrlRef = useRef<string | null>(null);
     const recordingTimerRef = useRef<number | null>(null);
     const recordingCountdownRef = useRef<number | null>(null);
+    const speakIdRef = useRef(0);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: "nearest", inline: "nearest" });
@@ -114,6 +123,7 @@ export default function Twin() {
     }, []);
 
     const stopPlayback = () => {
+        speakIdRef.current += 1;
         if (audioRef.current) {
             audioRef.current.pause();
             audioRef.current.src = '';
@@ -123,6 +133,7 @@ export default function Twin() {
             URL.revokeObjectURL(ttsUrlRef.current);
             ttsUrlRef.current = null;
         }
+        setIsSpeaking(false);
     };
 
     const revealAssistantText = async (id: string, fullText: string) => {
@@ -141,8 +152,21 @@ export default function Twin() {
     };
 
     const playTts = async (text: string) => {
-        if (!ttsEnabled || !text.trim()) return;
-        stopPlayback();
+        if (!ttsEnabled || !text.trim()) {
+            setIsSpeaking(false);
+            return;
+        }
+        const speakId = ++speakIdRef.current;
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.src = '';
+            audioRef.current = null;
+        }
+        if (ttsUrlRef.current) {
+            URL.revokeObjectURL(ttsUrlRef.current);
+            ttsUrlRef.current = null;
+        }
+        setIsSpeaking(true);
         try {
             const response = await fetch(`${API_URL}/tts`, {
                 method: 'POST',
@@ -151,13 +175,31 @@ export default function Twin() {
             });
             if (!response.ok) throw new Error('TTS request failed');
             const blob = await response.blob();
+            if (speakIdRef.current !== speakId) return;
             const url = URL.createObjectURL(blob);
             ttsUrlRef.current = url;
             const audio = new Audio(url);
             audioRef.current = audio;
-            await audio.play();
+            await new Promise<void>((resolve) => {
+                const finish = () => resolve();
+                audio.onended = finish;
+                audio.onerror = finish;
+                void audio.play().catch(finish);
+            });
         } catch (error) {
             console.error('TTS error:', error);
+        } finally {
+            if (speakIdRef.current === speakId) {
+                setIsSpeaking(false);
+                if (audioRef.current) {
+                    audioRef.current.src = '';
+                    audioRef.current = null;
+                }
+                if (ttsUrlRef.current) {
+                    URL.revokeObjectURL(ttsUrlRef.current);
+                    ttsUrlRef.current = null;
+                }
+            }
         }
     };
 
@@ -201,9 +243,8 @@ export default function Twin() {
                 role: 'assistant',
                 content: '',
                 timestamp: new Date(),
-                emotion: (EMOTIONS as readonly string[]).includes(data.emotion)
-                    ? data.emotion
-                    : classifyQuestionTone(content),
+                emotion: parseEmotionLabel(data.emotion)
+                    || classifyQuestionTone(data.response || ''),
             };
 
             setMessages((prev) => [...prev, assistantMessage]);
@@ -248,11 +289,14 @@ export default function Twin() {
             }
             await sendMessage(transcript);
         } catch (error) {
-            console.error('Transcription error:', error);
+            const unreachable =
+                error instanceof TypeError && /fetch/i.test(error.message);
             const errorMessage: Message = {
                 id: Date.now().toString(),
                 role: 'assistant',
-                content: 'Sorry, I could not transcribe that recording. Please try again.',
+                content: unreachable
+                    ? 'Cannot reach the backend on port 8000. Start it with uv run server.py, then try again.'
+                    : 'Sorry, I could not transcribe that recording. Please try again.',
                 timestamp: new Date(),
                 emotion: 'concerned',
             };
@@ -284,7 +328,7 @@ export default function Twin() {
     };
 
     const startRecording = async () => {
-        if (isLoading || isTranscribing) return;
+        if (isLoading || isTranscribing || isSpeaking) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaStreamRef.current = stream;
@@ -438,6 +482,11 @@ export default function Twin() {
                                     : 'bg-white border border-gray-200 text-gray-800'
                             }`}
                         >
+                            {message.role === 'assistant' && (
+                                <p className="text-xs text-gray-500 mb-1">
+                                    {message.content.length} character{message.content.length === 1 ? '' : 's'}
+                                </p>
+                            )}
                             <p className="whitespace-pre-wrap">{message.content}</p>
                             <p
                                 className={`text-xs mt-1 ${
@@ -496,7 +545,9 @@ export default function Twin() {
                                 ? `Recording... ${recordingSecondsLeft}s left`
                                 : isTranscribing
                                   ? 'Transcribing...'
-                                  : `Type or tap the mic (${MAX_RECORDING_SECONDS}s max)...`
+                                  : isSpeaking
+                                    ? 'Speaking... microphone paused'
+                                    : `Type or tap the mic (${MAX_RECORDING_SECONDS}s max)...`
                         }
                         className="w-full px-4 py-2 pr-14 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-600 focus:border-transparent text-gray-800"
                         disabled={isLoading || isRecording || isTranscribing}
@@ -509,7 +560,7 @@ export default function Twin() {
                     <button
                         type="button"
                         onClick={toggleRecording}
-                        disabled={isLoading || isTranscribing}
+                        disabled={isLoading || isTranscribing || isSpeaking}
                         className={`px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
                             isRecording
                                 ? 'bg-red-600 text-white hover:bg-red-700'
@@ -518,12 +569,16 @@ export default function Twin() {
                         title={
                             isRecording
                                 ? `Stop recording (${recordingSecondsLeft}s left)`
-                                : `Record a voice message (${MAX_RECORDING_SECONDS}s max)`
+                                : isSpeaking
+                                  ? 'Microphone paused until the reply finishes speaking'
+                                  : `Record a voice message (${MAX_RECORDING_SECONDS}s max)`
                         }
                         aria-label={
                             isRecording
                                 ? `Stop recording, ${recordingSecondsLeft} seconds left`
-                                : `Record a voice message, ${MAX_RECORDING_SECONDS} second maximum`
+                                : isSpeaking
+                                  ? 'Microphone paused until the reply finishes speaking'
+                                  : `Record a voice message, ${MAX_RECORDING_SECONDS} second maximum`
                         }
                     >
                         {isRecording ? (
