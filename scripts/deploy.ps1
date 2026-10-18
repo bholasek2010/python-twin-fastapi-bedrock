@@ -8,6 +8,16 @@ Write-Host "Deploying $ProjectName to $Environment ..." -ForegroundColor Green
 
 # 1. Build Lambda package
 Set-Location (Split-Path $PSScriptRoot -Parent)   # project root
+if (-not $env:OPENAI_API_KEY -and (Test-Path "backend/.env")) {
+    $keyLine = Get-Content "backend/.env" | Where-Object { $_ -match '^OPENAI_API_KEY=' } | Select-Object -Last 1
+    if ($keyLine) {
+        $env:OPENAI_API_KEY = ($keyLine -replace '^OPENAI_API_KEY=', '').Trim().Trim('"').Trim("'")
+    }
+}
+if (-not $env:OPENAI_API_KEY) {
+    throw "OPENAI_API_KEY is required for voice transcription and spoken replies. Set it in the environment or backend/.env"
+}
+$env:TF_VAR_openai_api_key = $env:OPENAI_API_KEY
 Write-Host "Building Lambda package..." -ForegroundColor Yellow
 Set-Location backend
 uv run deploy.py

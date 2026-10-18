@@ -7,6 +7,16 @@ PROJECT_NAME=${2:-twin}
 echo "Deploying ${PROJECT_NAME} to ${ENVIRONMENT}..."
 
 cd "$(dirname "$0")/.."
+if [ -z "${OPENAI_API_KEY:-}" ] && [ -f backend/.env ]; then
+  OPENAI_API_KEY=$(grep -E '^OPENAI_API_KEY=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+fi
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "OPENAI_API_KEY is required for voice transcription and spoken replies."
+  echo "Set it as a GitHub Actions secret, or in backend/.env for local deploys."
+  exit 1
+fi
+export TF_VAR_openai_api_key="$OPENAI_API_KEY"
+
 echo "Building Lambda package..."
 (cd backend && uv run python deploy.py)
 
