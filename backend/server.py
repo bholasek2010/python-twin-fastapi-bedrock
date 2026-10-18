@@ -66,15 +66,27 @@ class ChatResponse(BaseModel):
 
 
 EMOTIONS = (
-    "happy",
+    "sorry",
     "sad",
-    "curious",
-    "thoughtful",
+    "unhappy",
+    "depressed",
+    "lonely",
+    "upset",
+    "hurt",
+    "worried",
+    "concerned",
+    "afraid",
+    "scared",
+    "anxious",
     "surprised",
+    "shocked",
     "excited",
     "confused",
-    "concerned",
+    "grateful",
     "friendly",
+    "happy",
+    "thoughtful",
+    "curious",
     "neutral",
 )
 
@@ -88,19 +100,41 @@ def classify_question_tone_heuristic(text: str) -> str:
     def has(*words: str) -> bool:
         return any(word in q for word in words)
 
-    if has("sorry", "sad", "unhappy", "depressed", "miss you", "lonely", "upset", "hurt"):
+    if has("sorry"):
+        return "sorry"
+    if has("depressed"):
+        return "depressed"
+    if has("lonely", "miss you"):
+        return "lonely"
+    if has("unhappy"):
+        return "unhappy"
+    if has("upset"):
+        return "upset"
+    if has("hurt"):
+        return "hurt"
+    if has("sad"):
         return "sad"
-    if has("worried", "concerned", "afraid", "scared", "anxious", "risk", "problem", "wrong"):
+    if has("afraid"):
+        return "afraid"
+    if has("scared"):
+        return "scared"
+    if has("anxious"):
+        return "anxious"
+    if has("worried"):
+        return "worried"
+    if has("concerned", "risk", "problem", "wrong"):
         return "concerned"
-    if has("wow", "whoa", "no way", "unbelievable", "shock", "really?!"):
+    if has("shock", "unbelievable", "really?!"):
+        return "shocked"
+    if has("wow", "whoa", "no way"):
         return "surprised"
     if has("excited", "can't wait", "amazing", "awesome", "love this", "congrats"):
         return "excited"
     if has("confused", "don't understand", "dont understand", "unclear", "lost me", "huh"):
         return "confused"
-    if has("thank", "thanks", "appreciate", "nice to meet", "hello", "hey", "how are you"):
-        return "friendly"
-    if q in {"hi", "hi!", "hey!", "hello!"} or q.startswith("hi ") or q.startswith("hey "):
+    if has("thank", "thanks", "appreciate"):
+        return "grateful"
+    if has("nice to meet", "hello", "hey", "how are you") or q in {"hi", "hi!", "hey!", "hello!"} or q.startswith("hi ") or q.startswith("hey "):
         return "friendly"
     if has("happy", "glad", "great news", "wonderful", "smile"):
         return "happy"

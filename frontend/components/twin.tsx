@@ -12,15 +12,27 @@ interface Message {
 }
 
 const EMOTIONS = [
-    'happy',
+    'sorry',
     'sad',
-    'curious',
-    'thoughtful',
+    'unhappy',
+    'depressed',
+    'lonely',
+    'upset',
+    'hurt',
+    'worried',
+    'concerned',
+    'afraid',
+    'scared',
+    'anxious',
     'surprised',
+    'shocked',
     'excited',
     'confused',
-    'concerned',
+    'grateful',
     'friendly',
+    'happy',
+    'thoughtful',
+    'curious',
     'neutral',
 ] as const;
 
@@ -36,12 +48,24 @@ function classifyQuestionTone(text: string): string {
     if (!q) return 'neutral';
     const has = (...words: string[]) => words.some((word) => q.includes(word));
 
-    if (has('sorry', 'sad', 'unhappy', 'depressed', 'lonely', 'upset', 'hurt')) return 'sad';
-    if (has('worried', 'concerned', 'afraid', 'scared', 'anxious', 'risk', 'problem', 'wrong')) return 'concerned';
-    if (has('wow', 'whoa', 'no way', 'unbelievable', 'shock')) return 'surprised';
+    if (has('sorry')) return 'sorry';
+    if (has('depressed')) return 'depressed';
+    if (has('lonely', 'miss you')) return 'lonely';
+    if (has('unhappy')) return 'unhappy';
+    if (has('upset')) return 'upset';
+    if (has('hurt')) return 'hurt';
+    if (has('sad')) return 'sad';
+    if (has('afraid')) return 'afraid';
+    if (has('scared')) return 'scared';
+    if (has('anxious')) return 'anxious';
+    if (has('worried')) return 'worried';
+    if (has('concerned', 'risk', 'problem', 'wrong')) return 'concerned';
+    if (has('shock', 'unbelievable')) return 'shocked';
+    if (has('wow', 'whoa', 'no way')) return 'surprised';
     if (has('excited', "can't wait", 'amazing', 'awesome', 'love this', 'congrats')) return 'excited';
     if (has('confused', "don't understand", 'dont understand', 'unclear', 'lost me', 'huh')) return 'confused';
-    if (has('thank', 'thanks', 'appreciate', 'nice to meet', 'hello', 'hey', 'how are you') || q === 'hi' || q.startsWith('hi ')) return 'friendly';
+    if (has('thank', 'thanks', 'appreciate')) return 'grateful';
+    if (has('nice to meet', 'hello', 'hey', 'how are you') || q === 'hi' || q.startsWith('hi ')) return 'friendly';
     if (has('happy', 'glad', 'great news', 'wonderful', 'smile')) return 'happy';
     if (has('think', 'thoughts', 'reflect', 'consider', 'opinion', 'should i', 'advice')) return 'thoughtful';
     if (has('why', 'how', 'what', 'when', 'where', 'who', 'curious') || q.endsWith('?')) return 'curious';
