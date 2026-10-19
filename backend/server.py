@@ -72,7 +72,6 @@ EMOTIONS = (
     "depressed",
     "lonely",
     "upset",
-    "hurt",
     "worried",
     "concerned",
     "afraid",
