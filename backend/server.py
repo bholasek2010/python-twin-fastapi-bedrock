@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from typing import Literal, Optional, List, Dict
 import json
+import re
 import uuid
 from datetime import datetime
 import io
@@ -132,6 +133,21 @@ def parse_emotion_label(raw: str) -> str | None:
         if emotion in cleaned:
             return emotion
     return None
+
+
+def strip_face_label(text: str) -> str:
+    """Remove labels like 'anxious face' or '**Anxious face**' from reply text."""
+    cleaned = text or ""
+    labels = [f"{emotion} face" for emotion in sorted(EMOTIONS, key=len, reverse=True)]
+    for label in labels:
+        cleaned = re.sub(
+            rf"(?i)[\*_`#\"'\[\(]*\b{re.escape(label)}\b[\*_`#\"'\]\)]*[:.\-]*",
+            " ",
+            cleaned,
+        )
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip(" \t\n:-")
 
 
 def classify_question_tone_heuristic(text: str) -> str:
@@ -370,6 +386,10 @@ async def chat(request: ChatRequest):
 
         # Call Bedrock for response
         assistant_response = call_bedrock(conversation, request.message)
+        emotion = classify_question_tone(assistant_response)
+        if emotion not in EMOTIONS:
+            emotion = "neutral"
+        assistant_response = strip_face_label(assistant_response)
 
         # Update conversation history
         conversation.append(
@@ -386,9 +406,6 @@ async def chat(request: ChatRequest):
         # Save conversation
         save_conversation(session_id, conversation)
 
-        emotion = classify_question_tone(assistant_response)
-        if emotion not in EMOTIONS:
-            emotion = "neutral"
         return ChatResponse(
             response=assistant_response,
             session_id=session_id,
