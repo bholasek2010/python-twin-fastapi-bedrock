@@ -1,8 +1,7 @@
 name: Deploy Digital Twin
 
+# Do not deploy from the public GitHub repo. Run deploy.sh locally, or from a private repo.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
@@ -22,6 +21,7 @@ permissions:
 jobs:
   deploy:
     name: Deploy to ${{ github.event.inputs.environment || 'dev' }}
+    if: github.repository != 'bholasek2010/python-twin-fastapi-bedrock'
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     

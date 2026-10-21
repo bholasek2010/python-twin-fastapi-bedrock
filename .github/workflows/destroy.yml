@@ -22,6 +22,7 @@ permissions:
 jobs:
   destroy:
     name: Destroy ${{ github.event.inputs.environment }}
+    if: github.repository != 'bholasek2010/python-twin-fastapi-bedrock'
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     
