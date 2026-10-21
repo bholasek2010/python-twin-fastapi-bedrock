@@ -73,6 +73,8 @@ EMOTIONS = (
     "depressed",
     "lonely",
     "upset",
+    "angry",
+    "hurt",
     "worried",
     "concerned",
     "afraid",
@@ -97,7 +99,9 @@ EmotionFace = Literal[
     "depressed face",
     "lonely face",
     "upset face",
+    "angry face",
     "hurt face",
+    "excited face",
     "worried face",
     "concerned face",
     "afraid face",
@@ -105,7 +109,6 @@ EmotionFace = Literal[
     "anxious face",
     "surprised face",
     "shocked face",
-    "excited face",
     "confused face",
     "grateful face",
     "friendly face",
@@ -135,19 +138,66 @@ def parse_emotion_label(raw: str) -> str | None:
     return None
 
 
-def strip_face_label(text: str) -> str:
-    """Remove labels like 'anxious face' or '**Anxious face**' from reply text."""
-    cleaned = text or ""
-    labels = [f"{emotion} face" for emotion in sorted(EMOTIONS, key=len, reverse=True)]
-    for label in labels:
-        cleaned = re.sub(
-            rf"(?i)[\*_`#\"'\[\(]*\b{re.escape(label)}\b[\*_`#\"'\]\)]*[:.\-]*",
-            " ",
-            cleaned,
+def parse_bedrock_reply(raw: str) -> tuple[str, str | None]:
+    """Split Bedrock JSON {reply, emotion} from visible chat text."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    emotion = None
+    reply = ""
+    start = text.find("{")
+    end = text.rfind("}")
+    blob = text[start : end + 1] if start != -1 and end > start else ""
+    if blob:
+        candidates = [blob, blob.replace("'", '"')]
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                reply = str(
+                    data.get("reply")
+                    or data.get("response")
+                    or data.get("text")
+                    or data.get("message")
+                    or ""
+                )
+                emotion = parse_emotion_label(
+                    str(data.get("emotion") or data.get("face") or data.get("label") or "")
+                )
+                break
+    if not emotion:
+        match = re.search(
+            r"""["']?(?:emotion|face|label)["']?\s*:\s*["']?([a-zA-Z]+(?:\s+face)?)""",
+            text,
+            flags=re.IGNORECASE,
         )
+        if match:
+            emotion = parse_emotion_label(match.group(1))
+    visible = strip_face_label(reply or text)
+    return visible, emotion
+
+
+def strip_face_label(text: str) -> str:
+    """Remove labels like 'anxious face', '**anxious**', or '(anxious)' from reply text."""
+    cleaned = text or ""
+    for emotion in sorted(EMOTIONS, key=len, reverse=True):
+        word = re.escape(emotion)
+        label = rf"(?:{word}(?:\s+face)?)"
+        patterns = (
+            rf"(?i)[*_`]{{1,3}}\s*\b{label}\b\s*[*_`]{{1,3}}",
+            rf"(?i)[\(\[]\s*\b{label}\b\s*[\)\]]",
+            rf"(?i)\b{word}\s+face\b",
+        )
+        for pattern in patterns:
+            cleaned = re.sub(pattern, " ", cleaned)
+        cleaned = re.sub(rf"(?i)^\s*\b{label}\b\s*[:.\-]+\s*", "", cleaned)
+        cleaned = re.sub(rf"(?i)\s*[:.\-]+\s*\b{label}\b\s*$", "", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned.strip(" \t\n:-")
+    return cleaned.strip(" \t\n:-*")
 
 
 def classify_question_tone_heuristic(text: str) -> str:
@@ -169,6 +219,8 @@ def classify_question_tone_heuristic(text: str) -> str:
         return "unhappy"
     if has("upset"):
         return "upset"
+    if has("angry", "that's enough", "last time", "stop asking"):
+        return "angry"
     if has("hurt"):
         return "hurt"
     if has("sad"):
@@ -204,9 +256,20 @@ def classify_question_tone_heuristic(text: str) -> str:
     return "neutral"
 
 
-def classify_question_tone(text: str, reply: str = "") -> str:
-    """Pick a favicon emotion from the assistant reply, using OpenAI when possible."""
+def classify_question_tone(
+    text: str,
+    reply: str = "",
+    history: Optional[List[Dict]] = None,
+) -> str:
+    """Pick a favicon emotion from the user turn, history, and assistant reply."""
     reply_text = (reply or text or "").strip()
+    user_text = (text or "").strip() if reply else ""
+    prior = ""
+    for msg in (history or [])[-16:]:
+        role = msg.get("role", "")
+        content = (msg.get("content") or "")[:240]
+        if role in {"user", "assistant"} and content:
+            prior += f"{role}: {content}\n"
     try:
         client = get_openai_client()
         result = client.chat.completions.parse(
@@ -215,12 +278,41 @@ def classify_question_tone(text: str, reply: str = "") -> str:
                 {
                     "role": "system",
                     "content": (
-                        "Classify the emotional tone of the assistant reply. "
-                        "Choose exactly one allowed face label. "
-                        "Use 'anxious face' when the reply sounds nervous, uneasy, or tense."
+                        "Choose exactly one face label. The USER message decides the situation. "
+                        "Personal categories are separate buckets: family, relationships, hobbies, "
+                        "food, travel, health, Halloween, other personal. Count only USER turns "
+                        "in the current message's bucket. Do not add other personal buckets "
+                        "into that count. Do not stay angry or anxious after the user changes "
+                        "to a new unused bucket.\n"
+                        "angry: ONLY when this same bucket appears 4 or more times in user "
+                        "turns. Never for a first question in a new bucket.\n"
+                        "anxious: ONLY when this same bucket appears 2 or 3 times. Never for a "
+                        "first question in a new bucket. Never just because the assistant "
+                        "steers back to work after answering a new topic.\n"
+                        "grateful: ONLY when the USER's own message is professional after a "
+                        "personal detour.\n"
+                        "scared: first Halloween or costume mention.\n"
+                        "shocked: profanity or very rude language.\n"
+                        "curious: user shares something about themselves on a new topic.\n"
+                        "happy: USER asks about career, architecture, skills, or work.\n"
+                        "friendly: greetings or light small talk.\n"
+                        "thoughtful: advice, opinions, or reflection.\n"
+                        "confused: user or assistant is lost or unclear.\n"
+                        "sorry: apology.\n"
+                        "sad, unhappy, depressed, lonely, upset, hurt: grief or emotional pain.\n"
+                        "worried, concerned, afraid: risk, fear, or caution.\n"
+                        "surprised, excited: delight or strong positive surprise.\n"
+                        "neutral: only for flat factual replies with no other signal."
                     ),
                 },
-                {"role": "user", "content": reply_text[:2000]},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Recent history:\n{prior or '(none)'}\n"
+                        f"Current user message:\n{user_text[:1000] or '(none)'}\n\n"
+                        f"Assistant reply:\n{reply_text[:2000]}"
+                    ),
+                },
             ],
             response_format=EmotionClassification,
             temperature=0,
@@ -265,23 +357,29 @@ def get_memory_path(session_id: str) -> str:
     return f"{session_id}.json"
 
 
+def _messages_from_raw(raw) -> List[Dict]:
+    if isinstance(raw, dict):
+        return raw.get("messages", [])
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
 def load_conversation(session_id: str) -> List[Dict]:
     """Load conversation history from storage"""
     if USE_S3:
         try:
             response = s3_client.get_object(Bucket=S3_BUCKET, Key=get_memory_path(session_id))
-            return json.loads(response["Body"].read().decode("utf-8"))
+            return _messages_from_raw(json.loads(response["Body"].read().decode("utf-8")))
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 return []
             raise
-    else:
-        # Local file storage
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
-        if os.path.exists(file_path):
-            with open(file_path, "r") as f:
-                return json.load(f)
-        return []
+    file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            return _messages_from_raw(json.load(f))
+    return []
 
 
 def save_conversation(session_id: str, messages: List[Dict]):
@@ -294,7 +392,6 @@ def save_conversation(session_id: str, messages: List[Dict]):
             ContentType="application/json",
         )
     else:
-        # Local file storage
         os.makedirs(MEMORY_DIR, exist_ok=True)
         file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
         with open(file_path, "w") as f:
@@ -303,34 +400,29 @@ def save_conversation(session_id: str, messages: List[Dict]):
 
 def call_bedrock(conversation: List[Dict], user_message: str) -> str:
     """Call AWS Bedrock with conversation history"""
-    
-    # Build messages in Bedrock format
     messages = []
-    
-    # Add system prompt as first user message
-    # Or there's a better way to do this - pass in system=[{"text": prompt()}] to the converse call below
-    messages.append({
-        "role": "user", 
-        "content": [{"text": f"System: {prompt()}"}]
-    })
-    
-    # Add conversation history (limit to last 25 exchanges)
     for msg in conversation[-50:]:
+        content = msg["content"]
+        if msg["role"] == "assistant" and not str(content).lstrip().startswith("{"):
+            content = json.dumps({"reply": content, "emotion": "neutral"})
         messages.append({
             "role": msg["role"],
-            "content": [{"text": msg["content"]}]
+            "content": [{"text": content}]
         })
-    
-    # Add current user message
     messages.append({
         "role": "user",
-        "content": [{"text": user_message}]
+        "content": [{
+            "text": (
+                f"{user_message}\n\n"
+                'Reply with only JSON: {"reply": "...", "emotion": "<label>"}'
+            )
+        }]
     })
-    
+
     try:
-        # Call Bedrock using the converse API
         response = bedrock_client.converse(
             modelId=BEDROCK_MODEL_ID,
+            system=[{"text": prompt(EMOTIONS)}],
             messages=messages,
             inferenceConfig={
                 "maxTokens": 2000,
@@ -381,17 +473,16 @@ async def chat(request: ChatRequest):
         # Generate session ID if not provided
         session_id = request.session_id or str(uuid.uuid4())
 
-        # Load conversation history
         conversation = load_conversation(session_id)
 
-        # Call Bedrock for response
-        assistant_response = call_bedrock(conversation, request.message)
-        emotion = classify_question_tone(assistant_response)
+        raw_reply = call_bedrock(conversation, request.message)
+        assistant_response, emotion = parse_bedrock_reply(raw_reply)
+        print(f"Bedrock emotion: {emotion!r}")
+        if emotion is None:
+            print(f"Bedrock raw (unparsed): {raw_reply[:400]!r}")
         if emotion not in EMOTIONS:
             emotion = "neutral"
-        assistant_response = strip_face_label(assistant_response)
 
-        # Update conversation history
         conversation.append(
             {"role": "user", "content": request.message, "timestamp": datetime.now().isoformat()}
         )
@@ -402,8 +493,6 @@ async def chat(request: ChatRequest):
                 "timestamp": datetime.now().isoformat(),
             }
         )
-
-        # Save conversation
         save_conversation(session_id, conversation)
 
         return ChatResponse(

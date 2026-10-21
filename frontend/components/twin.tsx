@@ -18,6 +18,7 @@ const EMOTIONS = [
     'depressed',
     'lonely',
     'upset',
+    'angry',
     'hurt',
     'worried',
     'concerned',
