@@ -1,80 +1,10 @@
 # AI Digital Twin — technical architecture
 
-C4 Level 1 (context), Level 2 (containers), and a Level 2 zoom of the Lambda API, plus the chat request path. Production splits the UI and API across AWS. Locally the UI is Next.js on port 3000 and the API is FastAPI on port 8000.
-
-## Context
-
-C4 Level 1. The product is one software system. People and outside services sit around it.
-
-```mermaid
----
-config:
-  theme: default
-  themeVariables:
-    background: "#ffffff"
----
-flowchart LR
-    visitor["Website Visitor<br/>Person"]
-    owner["Twin Owner<br/>Person"]
-    twin["AI Digital Twin<br/>Software system"]
-    bedrock["Amazon Bedrock<br/>External system"]
-    s3["Amazon S3 memory<br/>External system"]
-    github["GitHub<br/>External system"]
-
-    visitor -->|"chat messages<br/>POST chat"| twin
-    twin -->|"ChatResponse JSON"| visitor
-    owner -->|"persona data + deploy"| twin
-    twin -->|"prompt + history"| bedrock
-    bedrock -->|"assistant text<br/>Nova converse"| twin
-    twin -->|"GetObject / PutObject"| s3
-    s3 -->|"session JSON"| twin
-    github -->|"CI/CD deploy"| twin
-```
-
-The browser never calls Bedrock or S3. The FastAPI API (Lambda in production) is the only client of those two services.
+C4 Level 1 (context), Level 2 (containers), a Level 2 zoom of the Lambda API, plus the request path. Production splits the static UI and API across AWS. Locally the UI is Next.js on port 3000 and the API is FastAPI on port 8000. The chat widget is embeddable (live on [OPG Labs](https://opglabs.com/project_digital_twin/)).
 
 ## Containers
 
-C4 Level 2. Optional C4 block, then the flowchart that actually renders.
-
-```mermaid
----
-config:
-  theme: default
-  themeVariables:
-    background: "#ffffff"
----
-C4Container
-    title Container diagram for AI Digital Twin
-
-    Person(visitor, "Website Visitor", "Chats with the twin in the browser")
-    Person(owner, "Twin Owner", "Defines persona data and deploys")
-
-    Container_Boundary(twin, "AI Digital Twin") {
-        Container(cf, "CloudFront", "CDN, HTTPS", "Serves the static UI and redirects to HTTPS")
-        Container(ui, "Frontend S3", "Next.js static export", "Chat UI. twin.tsx POSTs to NEXT_PUBLIC_API_URL/chat")
-        Container(apigw, "API Gateway", "HTTP API", "POST /chat, GET /health, GET /. CORS and throttle")
-        Container(api, "Lambda API", "Python 3.12, FastAPI, Mangum", "Session memory, persona prompt, Bedrock converse")
-        Container(mem, "Memory S3", "Private bucket", "One JSON file per session_id")
-    }
-
-    System_Ext(bedrock, "Amazon Bedrock", "Nova converse API")
-    System_Ext(cw, "Amazon CloudWatch", "Lambda logs and metrics")
-    System_Ext(github, "GitHub", "Source and GitHub Actions CI/CD")
-
-    Rel(visitor, cf, "HTTPS")
-    Rel(cf, ui, "Cached static files")
-    Rel(ui, apigw, "JSON { message, session_id }", "POST /chat")
-    Rel(apigw, api, "AWS_PROXY")
-    Rel(api, mem, "GetObject / PutObject")
-    Rel(api, bedrock, "Prompt + history")
-    Rel(bedrock, api, "Assistant reply")
-    Rel(api, cw, "Logs")
-    Rel(owner, api, "facts, LinkedIn, style, summary")
-    Rel(github, twin, "terraform apply + s3 sync")
-```
-
-If C4 rendering is unavailable, this flowchart is the same view:
+C4 Level 2. People and externals sit outside the system boundary. Emotion SVGs ship with the frontend. Persona files are packaged into the Lambda zip.
 
 ```mermaid
 ---
@@ -86,36 +16,41 @@ config:
 flowchart TB
     visitor[Website Visitor]
     owner[Twin Owner]
+    host["OPG Labs<br/>opglabs.com"]
     github[GitHub Actions]
 
     subgraph twin["AI Digital Twin"]
         cf["CloudFront<br/>CDN, HTTPS"]
-        ui["Frontend S3<br/>twin.tsx, page.tsx"]
-        apigw["API Gateway<br/>POST /chat, GET /health"]
-        api["Lambda API<br/>server.py, Mangum"]
+        ui["Frontend S3<br/>twin.tsx widget + 22 face SVGs"]
+        apigw["API Gateway<br/>POST /chat /transcribe /tts /speak"]
+        api["Lambda API<br/>server.py, context.py, Mangum"]
         mem["Memory S3<br/>session_id.json"]
     end
 
-    bedrock[Amazon Bedrock]
+    bedrock["Amazon Bedrock<br/>Nova converse"]
+    openai["OpenAI<br/>whisper-1, tts-1, gpt-4o-mini"]
     cw[Amazon CloudWatch]
 
+    visitor -->|HTTPS| host
+    host -->|embeds widget| ui
     visitor -->|HTTPS| cf
     cf -->|cached static files| ui
-    ui -->|"POST /chat { message, session_id }"| apigw
+    ui -->|POST JSON or audio| apigw
     apigw -->|AWS_PROXY| api
-    api -->|JSON ChatResponse| ui
+    api -->|ChatResponse JSON or mp3| ui
+    owner -->|facts, LinkedIn, style, summary| api
     api -->|GetObject / PutObject| mem
-    mem -->|conversation history| api
-    api -->|converse prompt + history| bedrock
-    bedrock -->|assistant reply| api
+    api -->|prompt + history| bedrock
+    bedrock -->|assistant text| api
+    api -->|transcribe, speech, face label| openai
+    openai -->|transcript, mp3, emotion| api
     api -->|logs| cw
-    owner -->|backend/data persona| api
     github -->|deploy.sh + terraform| twin
 ```
 
 ## Lambda API
 
-Flow of one `POST /chat` request through the Lambda API.
+One `POST /chat`. Persona files are assembled in `prompt()`. Emotion is classified after the reply is saved.
 
 ```mermaid
 ---
@@ -124,44 +59,15 @@ config:
   themeVariables:
     background: "#ffffff"
 ---
-flowchart TB
-    apigw["API Gateway<br/>POST /chat { message, session_id }"]
-    handler["lambda_handler<br/>Mangum adapter"]
-    app["FastAPI app<br/>server.py"]
-    chat["chat()"]
-    session{"session_id<br/>present?"}
-    newId["Create uuid session_id"]
-    load["load_conversation()"]
-    memGet["Memory S3<br/>GetObject session_id.json"]
-    resources["resources.py"]
-    subgraph files["Persona files backend/data"]
-        facts["facts.json"]
-        linkedin["linkedin.pdf"]
-        style["style.txt"]
-        summary["summary.txt"]
-    end
-    persona["prompt()<br/>context.py"]
-    bedrockCall["call_bedrock()"]
-    bedrock["Amazon Bedrock<br/>Nova converse"]
-    append["Append user + assistant turns"]
-    save["save_conversation()"]
-    memPut["Memory S3<br/>PutObject session_id.json"]
-    resp["ChatResponse JSON<br/>{ response, session_id }"]
+flowchart LR
+    chat["POST /chat<br/>session + memory"]
+    br["Bedrock<br/>persona + history"]
+    out["ChatResponse<br/>text, emotion"]
 
-    apigw --> handler --> app --> chat --> session
-    session -->|no| newId --> load
-    session -->|yes| load
-    load --> memGet
-    facts --> resources
-    linkedin --> resources
-    style --> resources
-    summary --> resources
-    resources --> persona
-    memGet --> bedrockCall
-    persona --> bedrockCall
-    bedrockCall --> bedrock --> append --> save --> memPut --> resp
-    resp --> apigw
+    chat --> br --> out
 ```
+
+Voice in is a separate `POST /transcribe` (Whisper) that returns transcript text for the same `/chat` path. Voice out is `POST /tts` or `POST /speak` (`tts-1` mp3). The UI pauses the mic until playback ends.
 
 ## Request path
 
@@ -175,13 +81,26 @@ config:
 sequenceDiagram
     autonumber
     actor Visitor as Website Visitor
-    participant UI as Next.js UI
+    participant Host as OPG Labs
+    participant UI as Twin widget
     participant APIGW as API Gateway
     participant API as Lambda FastAPI
     participant Mem as Memory S3
     participant BR as Amazon Bedrock
+    participant OA as OpenAI
 
-    Visitor->>UI: Type a message
+    Visitor->>Host: Open project page
+    Host->>UI: Embed Twin widget
+    alt Voice input
+        Visitor->>UI: Record up to 5s
+        UI->>APIGW: POST /transcribe audio
+        APIGW->>API: AWS_PROXY invoke
+        API->>OA: whisper-1
+        OA-->>API: transcript text
+        API-->>UI: { text }
+    else Typed input
+        Visitor->>UI: Type a message
+    end
     UI->>APIGW: POST /chat { message, session_id }
     APIGW->>API: AWS_PROXY invoke
     API->>API: Create session_id if missing
@@ -191,14 +110,22 @@ sequenceDiagram
     API->>BR: converse(model, history, user message)
     BR-->>API: Assistant text
     API->>Mem: PutObject updated session JSON
-    API-->>APIGW: { response, session_id }
+    API->>OA: Classify reply as one face label
+    OA-->>API: anxious face or other enum
+    API-->>APIGW: { response, session_id, emotion }
     APIGW-->>UI: JSON ChatResponse
-    UI-->>Visitor: Show reply and keep session_id
+    UI->>UI: Show reply and matching SVG
+    UI->>APIGW: POST /tts { text }
+    APIGW->>API: AWS_PROXY invoke
+    API->>OA: tts-1 alloy mp3
+    OA-->>API: audio/mpeg
+    API-->>UI: mp3 stream
+    UI-->>Visitor: Play on speakers, mic paused until ended
 ```
 
 ## Deployment
 
-GitHub Actions runs `scripts/deploy.sh`. Terraform creates the AWS resources. The Lambda zip is built with Docker (`backend/deploy.py`). The frontend is a Next.js export synced to S3, then CloudFront is invalidated.
+GitHub Actions runs `scripts/deploy.sh`. Terraform creates the AWS resources. The Lambda zip is built with Docker (`backend/deploy.py`). The frontend is a Next.js export synced to S3, then CloudFront is invalidated. `OPENAI_API_KEY` is required (GitHub Actions secret, or `backend/.env` for local deploys) and is passed into Lambda as `TF_VAR_openai_api_key`.
 
 ```mermaid
 ---
@@ -212,6 +139,7 @@ flowchart LR
     gha --> zip[Lambda zip via Docker]
     gha --> tf[Terraform]
     zip --> tf
+    key["OPENAI_API_KEY secret"] --> tf
     tf --> lambda[Lambda + API Gateway]
     tf --> febucket[Frontend S3]
     tf --> membucket[Memory S3]
@@ -222,4 +150,4 @@ flowchart LR
     inv --> cf
 ```
 
-Locally the UI is `npm run dev` on port 3000 and the API is `uv run python -m uvicorn server:app --reload` on port 8000. Memory is JSON files under `memory/` unless `USE_S3=true`.
+Locally the UI is `npm run dev` on port 3000 and the API is `uv run server.py` on port 8000. Memory is JSON files under `memory/` unless `USE_S3=true`. Production memory is a private S3 bucket. `frontend/app/page.tsx` is a 450px shell around `<Twin />` so the same widget can stand alone or sit inside a host page.
