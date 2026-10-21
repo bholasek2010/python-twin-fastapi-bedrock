@@ -13,6 +13,9 @@ lambda-package/
 # Memory storage (contains conversation history)
 memory/
 
+# Personal twin persona files (keep local only)
+backend/data/
+
 # Environment files
 .env
 .env.*
