@@ -4,7 +4,7 @@ A conversational digital twin that answers questions about my personal preferenc
 
 This project started from [Ed Donner](https://github.com/ed-donner)’s [twin](https://github.com/ed-donner/twin) course repo (Next.js chat UI, FastAPI, Bedrock, session memory, Terraform, and GitHub Actions). After that baseline, this fork added:
 
-- **Additional Context engineering** in `backend/context.py` and `backend/data/` so the model stays in character, brief, and professional
+- **Additional context engineering** in `backend/context.py` and `backend/data/` so the model stays in character, brief, and professional
 - **Transcribe** (`POST /transcribe`) with OpenAI Whisper for microphone input
 - **Speak / TTS** (`POST /tts` and `POST /speak`) so replies play through the speakers.  Tested with browser speech synthesis vs. OpenAI (browser=faster vs. OpenAI=more natural).  Added functionality to disable mic until audio ended so TTS does not bleed into the next recording.
 - **Emoticons** next to each assistant reply. OpenAI classifies the reply as one of 22 face labels based on the tone of the conversation (For example. Same question asked multiple times `anxious face`).
