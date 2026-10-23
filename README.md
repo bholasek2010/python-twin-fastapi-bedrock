@@ -2,9 +2,15 @@
 
 A conversational digital twin that answers questions about my personal preferences and architecture experiences in industry in the first person using a persona built from professional facts, LinkedIn notes, writing style, and a short summary. Visitors chat in the browser. The API keeps session memory and calls Amazon Bedrock for the reply.
 
-This project started from [Ed Donner](https://github.com/ed-donner)’s [twin](https://github.com/ed-donner/twin) course repo (Next.js chat UI, FastAPI, Bedrock, session memory, Terraform, and GitHub Actions). After that baseline, this fork added:
+## Credit
 
-- **Additional context engineering** in `backend/context.py` and `backend/data/` so the model stays in character, brief, and professional
+This project is based on **[twin](https://github.com/ed-donner/twin)** by **[Ed Donner](https://github.com/ed-donner)**, from the Udemy course [AI in Production](https://www.udemy.com/). Original copyright is Ed Donner's (see [LICENSE](LICENSE)). This repository is a student snapshot of that work (Next.js chat UI, FastAPI, Bedrock, session memory, Terraform, and GitHub Actions), with local additions listed below.
+
+Course questions and contributions belong with Ed: [ed-donner/twin](https://github.com/ed-donner/twin) or ed@edwarddonner.com.
+
+After that baseline, this fork added:
+
+- **Additional Context Engineering** in `backend/context.py` and `backend/data/` so the model stays in character, brief, and professional
 - **Transcribe** (`POST /transcribe`) with OpenAI Whisper for microphone input
 - **Speak / TTS** (`POST /tts` and `POST /speak`) so replies play through the speakers.  Tested with browser speech synthesis vs. OpenAI (browser=faster vs. OpenAI=more natural).  Added functionality to disable mic until audio ended so TTS does not bleed into the next recording.
 - **Emoticons** next to each assistant reply. OpenAI classifies the reply as one of 22 face labels based on the tone of the conversation (For example. Same question asked multiple times `anxious face`).
@@ -130,3 +136,7 @@ flowchart LR
 ```
 
 Local API memory is JSON under `memory/` unless `USE_S3=true`. Production memory is a private S3 bucket.
+
+## License
+
+MIT. Copyright (c) 2025 Ed Donner. See [LICENSE](LICENSE).
